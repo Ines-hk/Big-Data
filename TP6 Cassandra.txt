@@ -1,0 +1,487 @@
+1. التأكد من أن Docker يعمل : 
+C:\Users\User>docker ps
+CONTAINER ID   IMAGE               COMMAND                  CREATED         STATUS          PORTS                                         NAMES
+73c24fca618e   cassandra:4.1       "docker-entrypoint.s…"   2 minutes ago   Up 2 minutes    7000-7001/tcp, 7199/tcp, 9042/tcp, 9160/tcp   jovial_ardinghelli
+e4dd7f4468c8   ineshenka/tp3:1.0   "python app.py"          2 minutes ago   Up 2 minutes    5000/tcp                                      mystifying_gauss
+7a3155a98fb9   cassandra:4.1       "docker-entrypoint.s…"   7 hours ago     Up 18 seconds   0.0.0.0:9042->9042/tcp, [::]:9042->9042/tcp   mon-cassandra
+
+2. اصدار Docker :
+C:\Users\User>docker version
+Client:
+ Version:           28.5.1
+ API version:       1.51
+ Go version:        go1.24.8
+ Git commit:        e180ab8
+ Built:             Wed Oct  8 12:19:16 2025
+ OS/Arch:           windows/amd64
+ Context:           desktop-linux
+Server: Docker Desktop 4.49.0 (208700)
+ Engine:
+  Version:          28.5.1
+  API version:      1.51 (minimum version 1.24)
+  Go version:       go1.24.8
+  Git commit:       f8215cc
+  Built:            Wed Oct  8 12:17:24 2025
+  OS/Arch:          linux/amd64
+  Experimental:     false
+ containerd:
+  Version:          1.7.27
+  GitCommit:        05044ec0a9a75232cad458027ca83437aae3f4da
+ runc:
+  Version:          1.2.5
+  GitCommit:        v1.2.5-0-g59923ef
+ docker-init:
+  Version:          0.19.0
+  GitCommit:        de40ad0
+
+3. الدخول إلى cqlsh :
+C:\Users\User>docker exec -it mon-cassandra cqlsh
+Connected to Test Cluster at 127.0.0.1:9042
+[cqlsh 6.1.0 | Cassandra 4.1.10 | CQL spec 3.4.6 | Native protocol v5]
+Use HELP for help.
+cqlsh> 
+
+4. إنشاء Keyspace ثم استعماله :
+cqlsh> CREATE KEYSPACE IF NOT EXISTS resto_NY
+   ...   WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor': 1 };
+cqlsh>
+cqlsh> USE resto_NY;
+cqlsh:resto_ny> 
+
+5. إنشاء جدول Restaurant وفهرسه :
+cqlsh:resto_ny> CREATE TABLE IF NOT EXISTS Restaurant (
+           ...   id INT,
+           ...   Name VARCHAR,
+           ...   borough VARCHAR,
+           ...   BuildingNum VARCHAR,
+           ...   Street VARCHAR,
+           ...   ZipCode INT,
+           ...   Phone text,
+           ...   CuisineType VARCHAR,
+           ...   PRIMARY KEY (id)
+           ... );
+
+cqlsh:resto_ny> CREATE INDEX IF NOT EXISTS fk_Restaurant_cuisine
+           ... ON Restaurant (CuisineType);
+
+6. إنشاء جدول Inspection وفهرسه :
+cqlsh:resto_ny> CREATE TABLE IF NOT EXISTS Inspection (
+           ...   idRestaurant INT,
+           ...   InspectionDate date,
+           ...   ViolationCode VARCHAR,
+           ...   ViolationDescription VARCHAR,
+           ...   CriticalFlag VARCHAR,
+           ...   Score INT,
+           ...   Grade VARCHAR,
+           ...   PRIMARY KEY (idRestaurant, InspectionDate)
+           ... );
+
+cqlsh:resto_ny> CREATE INDEX IF NOT EXISTS fk_Inspection_Restaurant
+           ... ON Inspection (Grade);
+
+7. التأكد من بنية الجداول :
+cqlsh:resto_ny> DESC Restaurant;
+CREATE TABLE resto_ny.restaurant (
+    id int PRIMARY KEY,
+    borough text,
+    buildingnum text,
+    cuisinetype text,
+    name text,
+    phone text,
+    street text,
+    zipcode int
+) WITH additional_write_policy = '99p'
+    AND bloom_filter_fp_chance = 0.01
+    AND caching = {'keys': 'ALL', 'rows_per_partition': 'NONE'}
+    AND cdc = false
+    AND comment = ''
+    AND compaction = {'class': 'org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy', 'max_threshold': '32', 'min_threshold': '4'}
+    AND compression = {'chunk_length_in_kb': '16', 'class': 'org.apache.cassandra.io.compress.LZ4Compressor'}
+    AND memtable = 'default'
+    AND crc_check_chance = 1.0
+    AND default_time_to_live = 0
+    AND extensions = {}
+    AND gc_grace_seconds = 864000
+    AND max_index_interval = 2048
+    AND memtable_flush_period_in_ms = 0
+    AND min_index_interval = 128
+    AND read_repair = 'BLOCKING'
+    AND speculative_retry = '99p';
+
+CREATE INDEX fk_restaurant_cuisine ON resto_ny.restaurant (cuisinetype);
+
+CREATE INDEX idx_restaurant_borough ON resto_ny.restaurant (borough);
+
+8. الخروج من cqlsh إلى cmd :
+cqlsh:resto_ny> exit;
+C:\Users\User>
+
+9. الانتقال لمجلد الـ CSV ونسخ الملفات إلى الحاوية :
+C:\Users\User>cd C:\Users\User\Downloads\restaurants
+
+C:\Users\User\Downloads\restaurants>docker cp restaurants.csv mon-cassandra:/
+Successfully copied 2.11MB to mon-cassandra:/
+
+C:\Users\User\Downloads\restaurants>docker cp restaurants_inspections.csv mon-cassandra:/
+Successfully copied 82.5MB to mon-cassandra:/ 
+
+10. التأكد من وجود الملفات داخل الحاوية :
+C:\Users\User\Downloads\restaurants>docker exec -it mon-cassandra bash -lc "ls /*.csv"
+/restaurants.csv  /restaurants_inspections.csv
+
+11. الدخول مرة أخرى إلى cqlsh واستعمال الـ keyspace :
+C:\Users\User\Downloads\restaurants>docker exec -it mon-cassandra cqlsh
+Connected to Test Cluster at 127.0.0.1:9042
+[cqlsh 6.1.0 | Cassandra 4.1.10 | CQL spec 3.4.6 | Native protocol v5]
+Use HELP for help.
+cqlsh> USE resto_NY;
+cqlsh:resto_ny>
+
+12. استيراد بيانات Restaurant من CSV :
+cqlsh:resto_ny> COPY Restaurant (id, name, borough, buildingnum, street, zipcode, phone, cuisinetype)
+            ... FROM '/restaurants.csv' WITH DELIMITER=',';
+Using 3 child processes
+
+Starting copy of resto_ny.restaurant with columns [id, name, borough, buildingnum, street, zipcode, phone, cuisinetype].
+Processed: 25624 rows; Rate:    6061 rows/s; Avg. rate:    4320 rows/s
+25624 rows imported from 1 files in 0 day, 0 hour, 0 minute, and 5.932 seconds (0 skipped).
+
+13. استيراد بيانات Inspection من CSV :
+cqlsh:resto_ny>  COPY Inspection (idrestaurant, inspectiondate, violationcode, violationdescription, criticalflag, score, grade)
+            ... FROM '/restaurants_inspections.csv' WITH DELIMITER=',';
+Using 3 child processes
+
+Starting copy of resto_ny.inspection with columns [idrestaurant, inspectiondate, violationcode, violationdescription, criticalflag, score, grade].
+Processed: 441712 rows; Rate:    9108 rows/s; Avg. rate:    7807 rows/s
+441712 rows imported from 1 files in 0 day, 0 hour, 0 minute, and 56.577 seconds (0 skipped).
+
+14. التأكد من عدد الصفوف في كل جدول :
+cqlsh:resto_ny> SELECT count(*) FROM Restaurant;
+
+ count
+-------
+ 25624
+
+(1 rows)
+
+Warnings :
+Aggregation query used without partition key
+
+cqlsh:resto_ny> SELECT count(*) FROM Inspection;
+
+ count
+--------
+ 149818
+
+(1 rows)
+
+Warnings :
+Aggregation query used without partition key
+
+
+15. تنفيذ الاستعلامات 1 → 9 :
+
+16. كل المطاعم :
+cqlsh:resto_ny> SELECT * FROM Restaurant LIMIT 20;
+
+ id       | borough       | buildingnum | cuisinetype                                                      | name                              | phone      | street                 | zipcode
+----------+---------------+-------------+------------------------------------------------------------------+-----------------------------------+------------+------------------------+---------
+ 40786914 | STATEN ISLAND |        1465 |                                                         American |                     BOSTON MARKET | 7188151198 |          FOREST AVENUE |   10302
+ 40366162 |        QUEENS |       11909 |                                                         American |                  LENIHAN'S SALOON | 7188469770 |        ATLANTIC AVENUE |   11418
+ 41692194 |     MANHATTAN |         360 |                                                             Thai |                     BANGKOK HOUSE | 2125415943 |       WEST   46 STREET |   10036
+ 41430956 |      BROOKLYN |        2225 |                                                        Caribbean |                 TJ'S TASTY CORNER | 7184844783 |          TILDEN AVENUE |   11226
+ 41395531 |        QUEENS |         126 |                                                         American |                 NATHAN'S HOT DOGS | 7185958100 |       ROOSEVELT AVENUE |   11368
+ 50005384 | STATEN ISLAND |         271 |                                                          Chinese |                       YUMMY YUMMY | 7184425888 |      PORT RICHMOND AVE |   10302
+ 50005858 |      BROOKLYN |        6005 |                                                          Chinese |                    KING'S KITCHEN | 7188531388 |     FORT HAMILTON PKWY |   11219
+ 40962612 |     MANHATTAN |         164 |                                                          Italian |                             CESCA | 2127876300 |       WEST   75 STREET |   10023
+ 40995404 |     MANHATTAN |        4195 | Latin (Cuban, Dominican, Puerto Rican, South & Central American) | EL GUANACO RESTAURANT & PUPUSERIA | 2127955400 |               BROADWAY |   10033
+ 40368763 |     MANHATTAN |         111 |                                                         American |                         THE BROOK | 2127537020 |       EAST   54 STREET |   10022
+ 50019260 |      BROOKLYN |         604 |                                                     Delicatessen |                LEO'S DELI & GRILL | 3474629400 |             E 102ND ST |   11236
+ 50015473 |     MANHATTAN |          90 |                                                         Japanese |         KAEDE JAPANESE RESTAURANT | 2127668686 |            CHAMBERS ST |   10007
+ 41704055 |         BRONX |        1788 |                                                            Pizza |                       JOHNS PIZZA | 7188220201 |     WESTCHESTER AVENUE |   10472
+ 40860476 |        QUEENS |        9109 | Latin (Cuban, Dominican, Puerto Rican, South & Central American) |            RICE & BEANS LECHONERA | 7187400265 |  SPRINGFIELD BOULEVARD |   11428
+ 50044741 | STATEN ISLAND |        1203 |                                                           Indian |                    INDIAN EXPRESS | 7184426673 |             HYLAN BLVD |   10305
+ 41630020 |     MANHATTAN |         341 |                                                      Continental |          DOUBLETREE GREENHOUSE 36 | 2125428990 |       WEST   36 STREET |   10018
+ 41569081 |         BRONX |        2002 |                                                          Mexican |                          VIDAELVA | 7186841333 | CROSS BRONX EXPRESSWAY |   10472
+ 50048575 |        QUEENS |       16120 |                                                          Chinese |         TK VILLAGE BAKERY COMPANY | 7183590015 |          NORTHERN BLVD |   11358
+ 41569184 |     MANHATTAN |         321 |                                                         American |                               BKB | 2128611038 |       EAST   73 STREET |   10021
+ 41710788 |        QUEENS |      136-20 |                                                            Asian |                            SPRING | 7183958073 |              38 AVENUE |   11354
+
+(20 rows) 
+
+17. أسماء المطاعم فقط :
+cqlsh:resto_ny> SELECT name FROM Restaurant LIMIT 20;
+
+ name
+-----------------------------------
+                     BOSTON MARKET
+                  LENIHAN'S SALOON
+                     BANGKOK HOUSE
+                 TJ'S TASTY CORNER
+                 NATHAN'S HOT DOGS
+                       YUMMY YUMMY
+                    KING'S KITCHEN
+                             CESCA
+ EL GUANACO RESTAURANT & PUPUSERIA
+                         THE BROOK
+                LEO'S DELI & GRILL
+         KAEDE JAPANESE RESTAURANT
+                       JOHNS PIZZA
+            RICE & BEANS LECHONERA
+                    INDIAN EXPRESS
+          DOUBLETREE GREENHOUSE 36
+                          VIDAELVA
+         TK VILLAGE BAKERY COMPANY
+                               BKB
+                            SPRING
+
+(20 rows) 
+
+18. اسم وحيّ المطعم 41569764 :
+cqlsh:resto_ny> SELECT name, borough
+            ... FROM Restaurant
+            ... WHERE id = 41569764;
+
+ name    | borough
+---------+----------
+ BACCHUS | BROOKLYN
+
+(1 rows)
+
+19. تواريخ ودرجات تفتيش المطعم 41569764 :
+cqlsh:resto_ny> SELECT inspectiondate, grade
+            ...  FROM Inspection
+            ... WHERE idRestaurant = 41569764
+            ... ORDER BY inspectiondate DESC;
+
+ inspectiondate | grade
+----------------+-------
+     2016-02-25 |     A
+     2015-01-08 |     A
+     2014-08-06 |     A
+     2014-07-17 |  null
+     2014-02-05 |     A
+     2013-12-26 |  null
+     2013-07-08 |     A
+     2013-06-27 |  null
+
+(8 rows)
+
+20. أسماء المطاعم ذات المطبخ الفرنسي :
+cqlsh:resto_ny> SELECT name
+            ... FROM Restaurant
+            ... WHERE CuisineType = 'French';
+
+ name
+----------------------------------------------------------
+                                                  MATISSE
+                                                  ALMANAC
+                                             TOUT VA BIEN
+                                                    FELIX
+                                       CREPES ON COLUMBUS
+                                         THE BARONESS BAR
+                                               THE SIMONE
+                                                FP BAKERY
+                                            VIN ET FLEURS
+                                 CAFE BOULUD/BAR PLEIADES
+                                                  COCOTTE
+                                            Bourgeois Pig
+                                        DELICE & SARRASIN
+                                         LA TARTE FLAMBEE
+                                             JEAN GEORGES
+                                               MAISON MAY
+                                                   DANIEL
+                                              SAJU BISTRO
+                                        LE PAIN QUOTIDIEN
+                                               CAFE CLUNY
+                                                   BIN 71
+                                           CREPES CELSTES
+                                           JOYCE BAKESHOP
+                                   THE FOX AND THE CREPES
+                                                CAFE LOUP
+                                             ROUGE TOMATE
+                                              LE PERIGORD
+                                           NOGLU NEW YORK
+                                         BLISS 46  BISTRO
+                                                 PASCALOU
+                                                  BUVETTE
+                                        LE PAIN QUOTIDIEN                                       
+                                            CAFE D'ALSACE
+                                                 KING BEE
+                                             LA BERGAMOTE
+                                   TOCQUEVILLE RESTAURANT
+                                         BISTRO CHAT NOIR
+                                           MADISON BISTRO
+                                         57TH BELLE HOUSE
+                                  LA MIRABELLE RESTAURANT
+                                   LE TRAIN BLEU & B CAFE
+                                        HUDSON CLEARWATER
+                                                    CHERI
+                                                 VAUCLUSE
+                                         PARDON MY FRENCH
+                                           L' ANTAGONISTE
+                                           MADAME SOU SOU
+                                               THE BOUNTY
+                                           DUET BRASSERIE
+                                            MAISON KAYSER
+                                     DIRTY PIERRES BISTRO
+                            L'AILE OU LA CUISSE (L'A.O.C)
+                                               ABC COCINA
+                                     FRENCH CAFE GOURMAND
+                                           BISTRO VENDOME
+                                              LE COQ RICO
+                                        THE LITTLE PRINCE
+                                                LE COUCOU
+                                            TURKS & FROGS
+                                               MAISON MAY
+                                               Le Village
+                                         DOMAINE WINE BAR
+                                                   B CAFE
+                                       LUCIEN RESTAURAUNT
+                                 SEL ET POIVRE RESTAURANT
+                                           PETITE ABEILLE
+                                                   RAMONA
+                                                   BOULEY
+                                          QUATORZE BISTRO
+                                    BONJOUR CREPES & WINE
+                                                   CAMAJE
+                                         CHICKEN PROVENCE
+                                                LAFAYETTE
+                                            VIVE LA CREPE
+                                                    ORSAY
+                                            CHEZ NAPOLEAN
+                                           CHEZ JOSEPHINE
+                                    LA BONNE SOUPE BISTRO
+                                     BALTHAZAR RESTAURANT
+                                             LA MANGEOIRE
+                                         LA BOITE EN BOIS
+                                               PETIT OVEN
+                                      CHOKOLAT PATISSERIE
+                                              VAN LEEUWEN
+                                      CANNELLE PATISSERIE
+                                                BISTRO SK
+                                               MONTMARTRE
+                                            VIN SUR VINGT
+                                        HEADLESS HORSEMAN
+                                            CLUB BONAFIDE
+                                         DOMINIQUE BISTRO
+                                     ART HOUSE RESTAURANT
+                                                 26 SEATS
+                                CHEFS CLUB BY FOOD & WINE
+                                            VIVE LA CREPE
+                                              MAISON HUGO
+                                             CASIMIR & CO
+                                                   AMELIE
+                                               LE PADDOCK
+                                             BISTRO PETIT
+                                     MANILA  SOCIAL  CLUB
+                                                L'EXPRESS
+                                                 CHEZ MOI
+                                              BIG ROLLAND
+                                  DEMARCHELIER RESTAURANT
+                                                    MAMAM
+                                                      ...
+  
+(351 rows)
+
+21. أسماء المطاعم في BROOKLYN :
+cqlsh:resto_ny> SELECT name
+            ... FROM Restaurant
+            ... WHERE borough = 'BROOKLYN';
+عند تنفيذ:
+SELECT name FROM Restaurant WHERE borough = 'BROOKLYN';
+لم أحصل على خطأ، لأن الحقل borough كان عليه فهرس (INDEX) مسبقًا (idx_restaurant_borough).
+في الحالة العادية، بدون فهرس، هذا الاستعلام يُرفض في Cassandra لأنه يعتمد على عمود ليس مفتاحًا أوليًا ولا مفهرسًا، ويتطلب ALLOW FILTERING أو إنشاء INDEX.
+
+ name
+------------------------------------------------------------------------------------------------------
+                                                                                    TJ'S TASTY CORNER
+                                                                                       KING'S KITCHEN
+                                                                                   LEO'S DELI & GRILL
+                                                                                     JIN SUSHI & THAI
+                                                                                  CROWN FRIED CHICKEN
+                                                                                      BROOKLYN CAFE 1
+                                                                                 CRESCENT COFFEE SHOP
+                                                                          LA ROYALE BEER BURGER HOUSE
+                                                                                   CONNECTICUT MUFFIN
+                                                                                  GREENSTREETS SALADS
+                                                                                            THE TOPAZ
+                                                                                       LA GUARIDA BAR
+                                                                                   MAMA ROZ SOUL FOOD
+                                                                                     HONG KONG BAKERY
+                                                                           BROOKLYN BRIDGE GARDEN BAR
+                                                                                          THE CANTINE
+                                                                                        THE GUMBO BRO
+                                                                                    DAVEY'S ICE CREAM
+                                                                                  CROWN FRIED CHICKEN
+                                                                                          THAI TONY'S
+                                                                                         CHINA DRAGON
+                                                                                     KNAPP BAGEL CAFE
+                                                                               SCHNITZI SCHNITZEL BAR
+                                                                                      INDIGO MURPHY'S
+                                                                              EDDIE JR'S SPORT LOUNGE
+                                                                                 EL GRAN MAR DE PLATA
+                                                                                         MALAY BAKERY
+                                                                          EL NUEVO BARZOLA RESTAURANT
+                                                                                   PURITAN RESTAURANT
+                                                                                    EL CHARRO POBLANO
+                                                                                  HOLIDAY INN EXPRESS
+                                                                                               SUBWAY
+                                                                                    BREUCKELEN COLONY
+                                                                                          SILENT BARN
+                                                                                               BATATA
+                                                                                         WHITE CASTLE
+                                                                                    BUBBLE TEA- B.B.Q
+                                                                                   RED SUN RESTAURANT
+                                                                                              OUTPOST
+                                                                                     ROCCO'S PIZZERIA
+                                                                             SAPPORO JAPANESE CUISINE
+                                                                                        CAMILA'S CAFE
+                                                                                           ZOMBIE HUT
+                                                                                               SUBWAY
+                                                                                        EAST MET WEST
+                                                                                             BOOMWICH
+                                                                                           MCDONALD'S
+                                                                                                  KFC
+                                                                          NEW HONG KONG RESTAURANT II
+                                                                                          SHAKE SHACK
+                                                                                                  ...
+(6260 rows)
+
+22. الدرجات والنقاط للمطعم 41569764 مع score ≥ 10 : 
+cqlsh:resto_ny> SELECT grade, score
+            ... FROM Inspection
+            ... WHERE idRestaurant = 41569764
+            ... AND score >= 10
+            ... ALLOW FILTERING;
+
+ grade | score
+-------+-------
+  null |    19
+     A |    10
+
+(2 rows)
+
+23. درجات التفتيش حيث score > 30 :
+cqlsh:resto_ny> SELECT grade
+            ...  FROM Inspection
+            ... WHERE score > 30
+            ... ALLOW FILTERING;
+ReadFailure: Error from server: code=1300 [Replica(s) failed to execute read] message="Operation failed - received 0 responses and 1 failures:READ_TOO_MANY_TOMBSTONES
+from /172.17.0.4:7000" info={'consistency': 'ONE', 'required_responses': 1, 'received_responses': 0, 'failures': 1, 'error_code_map': {'172.17.0.4': '0x0001'}}
+العمود score:
+ليس جزءًا من المفتاح الأساسي (PRIMARY KEY)
+ولا عليه فهرس (INDEX)
+هذا يجبر Cassandra على عمل مسح كامل للجدول (full scan) مع ALLOW FILTERING للبحث عن الصفوف التي score > 30
+أثناء هذا المسح، يوجد عدد كبير من tombstones (صفوف محذوفة منطقيًا)، فيتجاوز Cassandra الحدّ المسموح به لقراءتها، فيعطي الخطأ:READ_TOO_MANY_TOMBSTONES
+
+24. عدد الصفوف من الاستعلام السابق :
+cqlsh:resto_ny>  SELECT COUNT(*)
+            ... FROM Inspection
+            ... WHERE score > 30
+            ... ALLOW FILTERING;
+ReadFailure: Error from server: code=1300 [Replica(s) failed to execute read] message="Operation failed - received 0 responses and 1 failures: READ_TOO_MANY_TOMBSTONES
+from /172.17.0.4:7000" info={'consistency': 'ONE', 'required_responses': 1, 'received_responses': 0, 'failures': 1, 'error_code_map': {'172.17.0.4': '0x0001'}}
+المشكلة أكبر لأننا نضيف فوق ذلك COUNT(*)، أي نطلب تجميع (aggregation) على كامل الجدول بدون تحديد partition key، فيصبح الاستعلام أثقل ويؤدي لنفس الخطأ.
+
+
